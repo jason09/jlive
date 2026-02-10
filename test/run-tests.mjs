@@ -27,6 +27,8 @@ eq("trim()", PHP.String.trim("  hi  "), "hi");
 eq("strtoupper()", PHP.String.strtoupper("ab"), "AB");
 eq("base64_encode/decode()", PHP.String.base64_decode(PHP.String.base64_encode("hello")), "hello");
 eq("str_contains()", PHP.String.str_contains("hello", "ell"), true);
+eq("strip_tags() removes tags",PHP.String.strip_tags("<p>Hello <b>World</b></p>"),"Hello World");
+eq("strip_tags() allows tags",PHP.String.strip_tags("<p>Hello <b>World</b></p>", "<p>"),"<p>Hello World</p>");
 
 // ---- Math
 eq("fmod()", PHP.Math.fmod(5.5, 2), 1.5);
@@ -53,6 +55,8 @@ const hash = PHP.Crypto.password_hash("secret", PHP.Crypto.PASSWORD_BCRYPT);
 eq("password_verify bcrypt", PHP.Crypto.password_verify("secret", hash), true);
 
 // ---- chain
-eq("chain()", chain("  hello world  ").trim().strtoupper().value(), "HELLO WORLD");
+eq("chain() 1", chain("  hello world  ").trim().strtoupper().value(), "HELLO WORLD");
+eq("chain() 2", chain(['A','b','c']).array_merge(['2',7]).implode().trim().strtoupper().value(), "ABC27");
+eq("chain() 3", chain("ABc27XU ").strtolower().trim().explode().value(), ["abc27xu"]);
 
 console.log("All tests passed.");

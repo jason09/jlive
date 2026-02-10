@@ -57,7 +57,9 @@
     }
   },
   "scripts": {
-    "test": "node test/run-tests.mjs"
+    "test": "node test/run-tests.mjs",
+    "types:chain": "node scripts/generate-chain-types.mjs",
+    "prepublishOnly": "npm run types:chain && npm test"
   },
   "engines": {
     "node": ">=24"

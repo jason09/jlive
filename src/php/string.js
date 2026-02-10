@@ -149,6 +149,7 @@ export function explode(separator, str, limit) {
  * @param {string} glue
  * @param {any[]|Record<string, any>} pieces
  * @returns {string}
+ * @see https://www.php.net/manual/en/function.implode.php
  */
 export function implode(glue, pieces) {
   assertArity("implode", arguments, 2, 2);
@@ -465,6 +466,62 @@ export function htmlentities(str) {
 export function htmlspecialchars(str) {
   return htmlentities(str);
 }
+
+/**
+ * Strip HTML and PHP tags from a string.
+ *
+ * @param {string} str The input string.
+ * @param {string|string[]|null} [allowed_tags=null] Tags that should not be stripped.
+ *        PHP accepts either a string like "<p><a>" or an array of tag names.
+ * @returns {string} The stripped string.
+ *
+ * @throws {TypeError} If arguments types are invalid.
+ * @see https://www.php.net/manual/en/function.strip-tags.php
+ */
+export function strip_tags(str, allowed_tags = null) {
+  if (typeof str !== "string") {
+    throw new TypeError(`strip_tags(): Argument #1 ($str) must be of type string, ${typeof str} given`);
+  }
+
+  let allowedSet = null;
+
+  if (allowed_tags == null) {
+    allowedSet = null;
+  } else if (typeof allowed_tags === "string") {
+    // Normalize: "<p><a>" => ["p","a"]
+    const names = allowed_tags
+      .toLowerCase()
+      .match(/<\s*([a-z0-9]+)\s*>/gi)?.map(t => t.replace(/[<> \t\r\n]/g, "")) ?? [];
+    allowedSet = new Set(names);
+  } else if (Array.isArray(allowed_tags)) {
+    const names = allowed_tags.map(t => {
+      if (typeof t !== "string") {
+        throw new TypeError(`strip_tags(): Argument #2 ($allowed_tags) array must contain only strings`);
+      }
+      return t.trim().toLowerCase().replace(/^<|>$/g, "");
+    }).filter(Boolean);
+    allowedSet = new Set(names);
+  } else {
+    throw new TypeError(
+      `strip_tags(): Argument #2 ($allowed_tags) must be of type ?(string|array), ${typeof allowed_tags} given`
+    );
+  }
+
+  // Remove HTML comments and PHP/ASP tags blocks (PHP behavior)
+  let out = str
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<\?(?:php)?[\s\S]*?\?>/gi, "")
+    .replace(/<%[\s\S]*?%>/g, "");
+
+  // Remove tags, but keep allowed ones
+  out = out.replace(/<\/?([a-zA-Z0-9]+)(\s[^>]*)?>/g, (m, tag) => {
+    const name = String(tag).toLowerCase();
+    return allowedSet && allowedSet.has(name) ? m : "";
+  });
+
+  return out;
+}
+
 
 /**
  * Count the number of substring occurrences.
@@ -946,17 +1003,6 @@ export function quotemeta(str) {
   assertArity("quotemeta", arguments, 1, 1);
   assertString("quotemeta", 1, str);
   return str.replace(/[.\\+*?\[\^\]$(){}=!<>|:-]/g, "\\$&");
-}
-
-/**
- * strip_tags().
- * @param {string} str
- * @returns {string}
- */
-export function strip_tags(str) {
-  assertArity("strip_tags", arguments, 1, 2);
-  assertString("strip_tags", 1, str);
-  return str.replace(/<\/?[^>]+>/g, "");
 }
 
 /**

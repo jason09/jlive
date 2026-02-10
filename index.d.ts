@@ -9,16 +9,16 @@ export interface Chain<T = any> {
   tap(fn: (value: T) => void): Chain<T>;
 
   // String methods (available when T is string)
-  trim(charMask?: string): Chain<any>;
-  strtolower(): Chain<any>;
-  strtoupper(): Chain<any>;
-  substr(start: number, length?: number): Chain<any>;
-  str_replace(search: any, replace: any, subject?: any, count?: any): Chain<any>;
-  explode(delimiter: string, string: string, limit?: number): Chain<any>;
+  //trim(charMask?: string): Chain<any>;
+  //strtolower(): Chain<any>;
+  //strtoupper(): Chain<any>;
+  //substr(start: number, length?: number): Chain<any>;
+  //str_replace(search: any, replace: any, subject?: any, count?: any): Chain<any>;
+  //explode(delimiter: string, string: string, limit?: number): Chain<any>;
   // Array methods
-  array_map(callback: any, array: any, ...arrays: any[]): Chain<any>;
-  array_filter(array: any, callback?: any, mode?: number): Chain<any>;
-  array_unique(array: any): Chain<any>;
+  //array_map(callback: any, array: any, ...arrays: any[]): Chain<any>;
+  //array_filter(array: any, callback?: any, mode?: number): Chain<any>;
+  //array_unique(array: any): Chain<any>;
 }
 
 export function chain<T>(value: T): Chain<T>;

@@ -64,6 +64,15 @@ export function assertString(fn, idx, v) {
 }
 
 /**
+ * @param {Directory} fn
+ * @param {number} idx
+ * @param {any} v
+ */
+export function assertDirectory(fn, idx, v) {
+  if (!(v instanceof Directory)) typeError(fn, idx, "Directory", v);
+}
+
+/**
  * @param {string} fn
  * @param {number} idx
  * @param {any} v

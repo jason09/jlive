@@ -1,29 +1,54 @@
 {
   "name": "jlive",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "author": "jason90 <sidiki90@gmail.com>",
   "url": "https://jlive-lib.com",
   "keywords": [
-    "function php in nodejs",
-    "javascript library for php",
-    "form validation js",
-    "ajax library",
+    "php",
+    "php-functions",
+    "php-compat",
     "phpjs",
-    "php to js",
-    "best javascript library for php",
-    "use php function in javascript"
+    "php-to-js",
+    "php-in-javascript",
+    "php-in-node",
+    "nodejs",
+    "esm",
+    "typescript",
+    "utilities",
+    "string-utils",
+    "array-utils",
+    "date-utils",
+    "crypto",
+    "bcrypt",
+    "regex",
+    "pcre",
+    "serialize",
+    "session",
+    "cookie",
+    "http",
+    "network",
+    "form-validation",
+    "ajax",
+    "querystring"
   ],
   "license": "MIT",
   "main": "index.js",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jason09/jLive"
+    "url": "git+https://github.com/jason09/jLive.git"
   },
-  "description": "PHP functions in Node for your project",
+  "description": "PHP-compatible utility functions for Node.js (ESM) + chainable API + TypeScript types.",
   "dependencies": {
     "bcryptjs": "^2.4.3"
   },
+  "files": [
+    "src",
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
   "types": "index.d.ts",
   "exports": {
     ".": {

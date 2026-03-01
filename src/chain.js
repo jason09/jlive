@@ -52,6 +52,16 @@ export class Chain {
     return this;
   }
 
+  /**
+   * Transform the current value.
+   * @template R
+   * @param {(v:T)=>R} fn
+   * @returns {Chain<R>}
+   */
+  pipe(fn) {
+    return new Chain(fn(this._v));
+  }
+
   // You can keep hand-written DX methods here if you want.
   // If you leave them out, auto-gen will still create the methods.
   

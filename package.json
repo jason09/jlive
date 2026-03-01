@@ -2,6 +2,7 @@
   "name": "jlive",
   "version": "0.1.1",
   "author": "jason90 <sidiki90@gmail.com>",
+  "description": "PHP-like helper library for Node.js: familiar utility functions, chainable API, and TypeScript support.",
   "url": "https://jlive-lib.com",
   "keywords": [
     "php",
@@ -38,12 +39,12 @@
     "type": "git",
     "url": "git+https://github.com/jason09/jLive.git"
   },
-  "description": "PHP-compatible utility functions for Node.js (ESM) + chainable API + TypeScript types.",
   "dependencies": {
     "bcryptjs": "^2.4.3"
   },
   "files": [
     "src",
+    "assets",
     "index.js",
     "index.d.ts",
     "README.md",
@@ -58,11 +59,18 @@
   },
   "scripts": {
     "test": "node test/run-tests.mjs",
+    "lint": "node scripts/check-syntax.mjs",
+    "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
+    "check": "npm run lint && npm run typecheck && npm test",
+    "pack:check": "npm pack --dry-run",
     "types:chain": "node scripts/generate-chain-types.mjs",
-    "prepublishOnly": "npm run types:chain && npm test"
+    "prepublishOnly": "npm run types:chain && npm run check && npm run pack:check"
   },
   "engines": {
     "node": ">=24"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
 }

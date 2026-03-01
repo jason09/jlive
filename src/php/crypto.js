@@ -96,8 +96,8 @@ export function hash(algo, data, binary = false) {
 
 /**
  * Password hashing algorithms (compat subset).
- * PHP's PASSWORD_DEFAULT is currently bcrypt, but implementing bcrypt without deps is heavy.
- * This library provides a secure default based on scrypt and a PHP-like hash string format.
+ * PHP's PASSWORD_DEFAULT is bcrypt in this library for parity.
+ * Legacy scrypt hashes are still accepted by password_verify/password_get_info.
  */
 
 /**
@@ -121,10 +121,10 @@ function _normalizeBcryptPrefix(hash) {
   if (typeof hash === "string" && hash.startsWith("$2y$")) return "$2b$" + hash.slice(4);
   return hash;
 }
-export const PASSWORD_DEFAULT = 0;
 export const PASSWORD_BCRYPT = 1;
 export const PASSWORD_ARGON2I = 2;
 export const PASSWORD_ARGON2ID = 3;
+export const PASSWORD_DEFAULT = PASSWORD_BCRYPT;
 
 /**
  * password_hash — Creates a password hash.
@@ -134,13 +134,13 @@ export const PASSWORD_ARGON2ID = 3;
  * @param {Record<string, any>} [options]
  * @returns {string}
  */
-export function password_hash(password, algo = PASSWORD_DEFAULT, options = {}) {
+export function password_hash(password, algo, options = {}) {
   assertArity("password_hash", arguments, 2, 3);
   assertString("password_hash", 1, password);
   assertNumber("password_hash", 2, algo);
 
 
-  if (algo === PASSWORD_BCRYPT) {
+  if (algo === PASSWORD_DEFAULT || algo === PASSWORD_BCRYPT) {
     const bcrypt = _loadBcrypt();
     const cost = Number(options.cost ?? 10);
     if (!Number.isInteger(cost) || cost < 4 || cost > 31) {
@@ -152,22 +152,8 @@ export function password_hash(password, algo = PASSWORD_DEFAULT, options = {}) {
     return hash.startsWith("$2") ? "$2y$" + hash.slice(4) : hash;
   }
 
-  // Secure default: scrypt with tunable params.
-  // Output format: $scrypt$N=<N>,r=<r>,p=<p>$<saltB64>$<hashB64>
-  // This is NOT byte-for-byte compatible with PHP's bcrypt output, but parity functions work (verify / needs_rehash).
-  if (algo === PASSWORD_DEFAULT) {
-    const N = Number(options.N ?? 1 << 14);
-    const r = Number(options.r ?? 8);
-    const p = Number(options.p ?? 1);
-    const keylen = Number(options.keylen ?? 64);
-
-    const salt = crypto.randomBytes(16);
-    const hash = crypto.scryptSync(password, salt, keylen, { N, r, p });
-    return `$scrypt$N=${N},r=${r},p=${p}$${salt.toString("base64")}$${hash.toString("base64")}`;
-  }
-
-  if (algo === PASSWORD_BCRYPT || algo === PASSWORD_ARGON2I || algo === PASSWORD_ARGON2ID) {
-    throw new Error("password_hash(): This library currently supports PASSWORD_DEFAULT (scrypt-based) only");
+  if (algo === PASSWORD_ARGON2I || algo === PASSWORD_ARGON2ID) {
+    throw new Error("password_hash(): This library currently supports bcrypt/PASSWORD_DEFAULT only");
   }
   throw new Error("password_hash(): Unknown algorithm");
 }
@@ -180,41 +166,35 @@ export function password_hash(password, algo = PASSWORD_DEFAULT, options = {}) {
  * @returns {boolean}
  */
 export function password_verify(password, hash) {
-assertArity("password_verify", arguments, 2, 2);
-assertString("password_verify", 1, password);
-assertString("password_verify", 2, hash);
+  assertArity("password_verify", arguments, 2, 2);
+  assertString("password_verify", 1, password);
+  assertString("password_verify", 2, hash);
 
-// bcrypt ($2y$, $2a$, $2b$)
-if (hash.startsWith("$2y$") || hash.startsWith("$2a$") || hash.startsWith("$2b$")) {
-  const bcrypt = _loadBcrypt();
-  return bcrypt.compareSync(password, _normalizeBcryptPrefix(hash));
-}
-
-// scrypt format: $scrypt$N=...,r=...,p=...$salt$hash
-if (hash.startsWith("$2y$") || hash.startsWith("$2a$") || hash.startsWith("$2b$")) {
-    // cost is the 2-digit number after the prefix, like $2y$10$...
-    const cost = Number(hash.slice(4, 6));
-    return { algo: PASSWORD_BCRYPT, algoName: "bcrypt", options: { cost: Number.isFinite(cost) ? cost : undefined } };
+  // bcrypt ($2y$, $2a$, $2b$)
+  if (hash.startsWith("$2y$") || hash.startsWith("$2a$") || hash.startsWith("$2b$")) {
+    const bcrypt = _loadBcrypt();
+    return bcrypt.compareSync(password, _normalizeBcryptPrefix(hash));
   }
 
+  // scrypt format: $scrypt$N=...,r=...,p=...$salt$hash
   if (hash.startsWith("$scrypt$")) {
-  const parts = hash.split("$");
-  if (parts.length < 5) return false;
-  const params = parts[2];
-  const saltB64 = parts[3];
-  const hashB64 = parts[4];
-  const m2 = /N=(\d+),r=(\d+),p=(\d+)/.exec(params);
-  if (!m2) return false;
-  const N = Number(m2[1]);
-  const r = Number(m2[2]);
-  const p = Number(m2[3]);
-  const salt = Buffer.from(saltB64, "base64url");
-  const expected = Buffer.from(hashB64, "base64url");
-  const derived = crypto.scryptSync(password, salt, expected.length, { N, r, p });
-  return crypto.timingSafeEqual(expected, derived);
-}
+    const parts = hash.split("$");
+    if (parts.length < 5) return false;
+    const params = parts[2];
+    const saltB64 = parts[3];
+    const hashB64 = parts[4];
+    const m2 = /N=(\d+),r=(\d+),p=(\d+)/.exec(params);
+    if (!m2) return false;
+    const N = Number(m2[1]);
+    const r = Number(m2[2]);
+    const p = Number(m2[3]);
+    const salt = Buffer.from(saltB64, "base64url");
+    const expected = Buffer.from(hashB64, "base64url");
+    const derived = crypto.scryptSync(password, salt, expected.length, { N, r, p });
+    return crypto.timingSafeEqual(expected, derived);
+  }
 
-return false;
+  return false;
 }
 
 /**
@@ -230,19 +210,16 @@ export function password_needs_rehash(hash, algo = PASSWORD_DEFAULT, options = {
   assertString("password_needs_rehash", 1, hash);
   assertNumber("password_needs_rehash", 2, algo);
 
-  if (algo !== PASSWORD_DEFAULT) return true;
-  if (!hash.startsWith("$scrypt$")) return true;
+  if (algo !== PASSWORD_DEFAULT && algo !== PASSWORD_BCRYPT) return true;
+  if (!hash.startsWith("$2y$") && !hash.startsWith("$2a$") && !hash.startsWith("$2b$")) return true;
 
-  const paramsPart = hash.split("$")[2] ?? "";
-  const params = Object.fromEntries(paramsPart.split(",").filter(Boolean).map((kv) => kv.split("=")));
-  const N = Number(params.N);
-  const r = Number(params.r);
-  const p = Number(params.p);
-
-  const wantN = Number(options.N ?? 1 << 14);
-  const wantr = Number(options.r ?? 8);
-  const wantp = Number(options.p ?? 1);
-  return N !== wantN || r !== wantr || p !== wantp;
+  const currentCost = Number(hash.slice(4, 6));
+  const wantedCost = Number(options.cost ?? 10);
+  if (!Number.isInteger(wantedCost) || wantedCost < 4 || wantedCost > 31) {
+    throw new TypeError("password_needs_rehash(): options.cost must be an int between 4 and 31");
+  }
+  if (!Number.isInteger(currentCost)) return true;
+  return currentCost !== wantedCost;
 }
 
 /**
@@ -264,7 +241,8 @@ export function password_get_info(hash) {
   if (hash.startsWith("$scrypt$")) {
     const paramsPart = hash.split("$")[2] ?? "";
     const params = Object.fromEntries(paramsPart.split(",").filter(Boolean).map((kv) => kv.split("=")));
-    return { algo: PASSWORD_DEFAULT, algoName: "scrypt", options: { N: Number(params.N), r: Number(params.r), p: Number(params.p) } };
+    // Legacy non-PHP algorithm from older jLive versions.
+    return { algo: 0, algoName: "scrypt", options: { N: Number(params.N), r: Number(params.r), p: Number(params.p) } };
   }
   return { algo: 0, algoName: "unknown", options: {} };
 }

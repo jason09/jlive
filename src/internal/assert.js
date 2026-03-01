@@ -64,12 +64,18 @@ export function assertString(fn, idx, v) {
 }
 
 /**
- * @param {Directory} fn
+ * @param {string} fn
  * @param {number} idx
  * @param {any} v
  */
 export function assertDirectory(fn, idx, v) {
-  if (!(v instanceof Directory)) typeError(fn, idx, "Directory", v);
+  const isDirectoryLike =
+    v !== null &&
+    typeof v === "object" &&
+    typeof v.read === "function" &&
+    typeof v.rewind === "function" &&
+    typeof v.close === "function";
+  if (!isDirectoryLike) typeError(fn, idx, "Directory", v);
 }
 
 /**

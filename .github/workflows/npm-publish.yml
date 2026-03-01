@@ -22,7 +22,10 @@ jobs:
           cache: npm
 
       - run: npm ci
-      - run: npm test
+      - run: npm run types:chain
+      - run: git diff --exit-code -- src/chain.generated.d.ts
+      - run: npm run check
+      - run: npm run pack:check
 
   publish-npm:
     needs: test

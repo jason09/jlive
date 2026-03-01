@@ -15,6 +15,7 @@
  */
 
 import crypto from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { assertArity, assertNumber, assertString, typeError } from "../internal/assert.js";
@@ -24,7 +25,6 @@ export const PHP_SESSION_DISABLED = 0;
 export const PHP_SESSION_NONE = 1;
 export const PHP_SESSION_ACTIVE = 2;
 
-let _status = PHP_SESSION_NONE;
 let _sessionName = "PHPSESSID";
 
 /** @type {{lifetime:number, path:string, domain:string, secure:boolean, httponly:boolean, samesite:"Lax"|"Strict"|"None"}} */
@@ -38,12 +38,10 @@ let _cookieParams = {
 };
 
 const _memStore = new Map(); // sid -> {data:string, mtime:number}
+const _sessionLocks = new Map(); // sid -> Promise queue tail
 
-let _currentId = "";
-let _currentData = {};
-let _isDirty = false;
-let _req = null;
-let _res = null;
+const _sessionContext = new AsyncLocalStorage();
+let _sessionIdHint = "";
 
 /**
  * Default save handler (memory).
@@ -129,8 +127,61 @@ function _newId() {
   return crypto.randomBytes(16).toString("hex");
 }
 
+async function _acquireSessionLock(sid) {
+  const previous = _sessionLocks.get(sid) ?? Promise.resolve();
+
+  /** @type {() => void} */
+  let resolveCurrent = () => {};
+  const current = new Promise((resolve) => {
+    resolveCurrent = resolve;
+  });
+  _sessionLocks.set(sid, current);
+
+  await previous;
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (_sessionLocks.get(sid) === current) _sessionLocks.delete(sid);
+    resolveCurrent();
+  };
+}
+
+function _releaseSessionLock(ctx) {
+  if (typeof ctx.lockRelease === "function") {
+    ctx.lockRelease();
+    ctx.lockRelease = null;
+  }
+  ctx.lockSid = "";
+}
+
+function _getContext() {
+  return _sessionContext.getStore() ?? null;
+}
+
+function _ensureContext(req, res) {
+  const existing = _getContext();
+  if (existing && existing.req === req && existing.res === res) return existing;
+
+  const ctx = {
+    status: PHP_SESSION_NONE,
+    id: "",
+    data: {},
+    isDirty: false,
+    req,
+    res,
+    lockSid: "",
+    lockRelease: null,
+  };
+  _sessionContext.enterWith(ctx);
+  return ctx;
+}
+
 function _ensureActive(fn) {
-  if (_status !== PHP_SESSION_ACTIVE) throw new Error(`${fn}(): session is not active`);
+  const ctx = _getContext();
+  if (!ctx || ctx.status !== PHP_SESSION_ACTIVE) throw new Error(`${fn}(): session is not active`);
+  return ctx;
 }
 
 function _serialize(data) {
@@ -156,9 +207,10 @@ function _deserialize(data) {
  */
 export function session_name(name = undefined) {
   assertArity("session_name", arguments, 0, 1);
+  const ctx = _getContext();
   if (name !== undefined) {
     assertString("session_name", 1, name);
-    if (_status === PHP_SESSION_ACTIVE) throw new Error("session_name(): cannot change name when session is active");
+    if (ctx?.status === PHP_SESSION_ACTIVE) throw new Error("session_name(): cannot change name when session is active");
     _sessionName = name;
   }
   return _sessionName;
@@ -185,7 +237,8 @@ export function session_get_cookie_params() {
  */
 export function session_set_cookie_params(opts, path = undefined, domain = undefined, secure = undefined, httponly = undefined) {
   assertArity("session_set_cookie_params", arguments, 1, 5);
-  if (_status === PHP_SESSION_ACTIVE) throw new Error("session_set_cookie_params(): cannot change params when session is active");
+  const ctx = _getContext();
+  if (ctx?.status === PHP_SESSION_ACTIVE) throw new Error("session_set_cookie_params(): cannot change params when session is active");
 
   if (typeof opts === "number") {
     _cookieParams.lifetime = opts;
@@ -215,7 +268,7 @@ export function session_set_cookie_params(opts, path = undefined, domain = undef
  * @returns {number}
  */
 export function session_status() {
-  return _status;
+  return _getContext()?.status ?? PHP_SESSION_NONE;
 }
 
 /**
@@ -226,12 +279,15 @@ export function session_status() {
  */
 export function session_id(id = undefined) {
   assertArity("session_id", arguments, 0, 1);
+  const ctx = _getContext();
   if (id !== undefined) {
     assertString("session_id", 1, id);
-    if (_status === PHP_SESSION_ACTIVE) throw new Error("session_id(): cannot set id when session is active");
-    _currentId = id;
+    if (ctx?.status === PHP_SESSION_ACTIVE) throw new Error("session_id(): cannot set id when session is active");
+    if (ctx) ctx.id = id;
+    else _sessionIdHint = id;
   }
-  return _currentId;
+  if (ctx) return ctx.id || _sessionIdHint;
+  return _sessionIdHint;
 }
 
 /**
@@ -243,7 +299,8 @@ export function session_id(id = undefined) {
 export function session_set_save_handler(handler) {
   assertArity("session_set_save_handler", arguments, 1, 1);
   if (!handler || typeof handler !== "object") typeError("session_set_save_handler", 1, "object", handler);
-  if (_status === PHP_SESSION_ACTIVE) throw new Error("session_set_save_handler(): cannot change handler when session is active");
+  const ctx = _getContext();
+  if (ctx?.status === PHP_SESSION_ACTIVE) throw new Error("session_set_save_handler(): cannot change handler when session is active");
 
   _handler = {
     open: handler.open ?? _handler.open,
@@ -273,46 +330,70 @@ if (__sessionSavePath && _handler === _defaultMemHandler) {
   _handler = _makeFileHandler(__sessionSavePath);
 }
 
-_req = req;
-  _res = res;
+  const ctx = _ensureContext(req, res);
 
-  if (_status === PHP_SESSION_ACTIVE) return true;
+  if (ctx.status === PHP_SESSION_ACTIVE) return true;
 
-  const cookies = $_COOKIE(req);
-  let sid = cookies[_sessionName] ?? _currentId;
+  try {
+    const cookies = $_COOKIE(req);
+    let sid = cookies[_sessionName] ?? ctx.id;
+    if (!sid && _sessionIdHint) {
+      sid = _sessionIdHint;
+      _sessionIdHint = "";
+    }
 
-  if (sid && typeof sid !== "string") sid = String(sid);
+    if (sid && typeof sid !== "string") sid = String(sid);
 
-  // strict mode: only accept existing IDs that the handler can read
-  const strict = Boolean(options.use_strict_mode ?? false);
+    // strict mode: only accept existing IDs that the handler can read
+    const strict = Boolean(options.use_strict_mode ?? false);
 
-  await _handler.open?.();
+    await _handler.open?.();
 
-  if (sid) {
-    const raw = await _handler.read?.(sid);
-    if (strict && !raw) sid = "";
-    _currentData = _deserialize(raw);
+    if (sid) {
+      ctx.lockRelease = await _acquireSessionLock(sid);
+      ctx.lockSid = sid;
+
+      const raw = await _handler.read?.(sid);
+      if (strict && !raw) {
+        sid = "";
+        _releaseSessionLock(ctx);
+      } else {
+        ctx.data = _deserialize(raw);
+      }
+    }
+
+    if (!sid) {
+      sid = _newId();
+      ctx.lockRelease = await _acquireSessionLock(sid);
+      ctx.lockSid = sid;
+      ctx.data = {};
+      // send cookie now
+      const expires = _cookieParams.lifetime > 0 ? Math.floor(Date.now() / 1000) + _cookieParams.lifetime : 0;
+      setcookie(
+        _sessionName,
+        sid,
+        expires,
+        _cookieParams.path,
+        _cookieParams.domain,
+        _cookieParams.secure,
+        _cookieParams.httponly,
+        res,
+        { samesite: _cookieParams.samesite }
+      );
+    }
+
+    ctx.id = sid;
+    ctx.isDirty = false;
+    ctx.status = PHP_SESSION_ACTIVE;
+
+    // Expose a PHP-like superglobal
+    req.__SESSION = ctx.data;
+
+    return true;
+  } catch (error) {
+    _releaseSessionLock(ctx);
+    throw error;
   }
-
-  if (!sid) {
-    sid = _newId();
-    _currentData = {};
-    // send cookie now
-    setcookie(_sessionName, sid, res, {
-      ..._cookieParams,
-      // PHP uses lifetime seconds; setcookie expects either Date or seconds; our setcookie handles both.
-      expires: _cookieParams.lifetime > 0 ? Math.floor(Date.now() / 1000) + _cookieParams.lifetime : 0,
-    });
-  }
-
-  _currentId = sid;
-  _isDirty = false;
-  _status = PHP_SESSION_ACTIVE;
-
-  // Expose a PHP-like superglobal
-  req.__SESSION = _currentData;
-
-  return true;
 }
 
 /**
@@ -321,14 +402,18 @@ _req = req;
  * @returns {Promise<boolean>}
  */
 export async function session_write_close() {
-  _ensureActive("session_write_close");
-  if (_isDirty) await _handler.write?.(_currentId, _serialize(_currentData));
-  await _handler.close?.();
-  _status = PHP_SESSION_NONE;
-  _req = null;
-  _res = null;
-  _isDirty = false;
-  return true;
+  const ctx = _ensureActive("session_write_close");
+  try {
+    if (ctx.isDirty) await _handler.write?.(ctx.id, _serialize(ctx.data));
+    await _handler.close?.();
+    ctx.status = PHP_SESSION_NONE;
+    ctx.req = null;
+    ctx.res = null;
+    ctx.isDirty = false;
+    return true;
+  } finally {
+    _releaseSessionLock(ctx);
+  }
 }
 
 /**
@@ -337,12 +422,18 @@ export async function session_write_close() {
  * @returns {Promise<boolean>}
  */
 export async function session_destroy() {
-  _ensureActive("session_destroy");
-  await _handler.destroy?.(_currentId);
-  _currentData = {};
-  _isDirty = false;
-  _status = PHP_SESSION_NONE;
-  return true;
+  const ctx = _ensureActive("session_destroy");
+  try {
+    await _handler.destroy?.(ctx.id);
+    ctx.data = {};
+    ctx.id = "";
+    ctx.isDirty = false;
+    ctx.status = PHP_SESSION_NONE;
+    if (ctx.req) ctx.req.__SESSION = ctx.data;
+    return true;
+  } finally {
+    _releaseSessionLock(ctx);
+  }
 }
 
 /**
@@ -353,18 +444,30 @@ export async function session_destroy() {
  */
 export async function session_regenerate_id(deleteOldSession = false) {
   assertArity("session_regenerate_id", arguments, 0, 1);
-  _ensureActive("session_regenerate_id");
+  const ctx = _ensureActive("session_regenerate_id");
 
-  const old = _currentId;
+  const old = ctx.id;
   const sid = _newId();
-  _currentId = sid;
-  _isDirty = true;
+  const releaseNew = await _acquireSessionLock(sid);
+  _releaseSessionLock(ctx);
+  ctx.lockRelease = releaseNew;
+  ctx.lockSid = sid;
+  ctx.id = sid;
+  ctx.isDirty = true;
 
-  if (_res) {
-    setcookie(_sessionName, sid, _res, {
-      ..._cookieParams,
-      expires: _cookieParams.lifetime > 0 ? Math.floor(Date.now() / 1000) + _cookieParams.lifetime : 0,
-    });
+  if (ctx.res) {
+    const expires = _cookieParams.lifetime > 0 ? Math.floor(Date.now() / 1000) + _cookieParams.lifetime : 0;
+    setcookie(
+      _sessionName,
+      sid,
+      expires,
+      _cookieParams.path,
+      _cookieParams.domain,
+      _cookieParams.secure,
+      _cookieParams.httponly,
+      ctx.res,
+      { samesite: _cookieParams.samesite }
+    );
   }
 
   if (deleteOldSession) await _handler.destroy?.(old);
@@ -392,8 +495,8 @@ export async function session_gc(maxlifetime = 1440) {
 export function session_get(key, defaultValue = null) {
   assertArity("session_get", arguments, 1, 2);
   assertString("session_get", 1, key);
-  _ensureActive("session_get");
-  return Object.prototype.hasOwnProperty.call(_currentData, key) ? _currentData[key] : defaultValue;
+  const ctx = _ensureActive("session_get");
+  return Object.prototype.hasOwnProperty.call(ctx.data, key) ? ctx.data[key] : defaultValue;
 }
 
 /**
@@ -405,9 +508,9 @@ export function session_get(key, defaultValue = null) {
 export function session_set(key, value) {
   assertArity("session_set", arguments, 2, 2);
   assertString("session_set", 1, key);
-  _ensureActive("session_set");
-  _currentData[key] = value;
-  _isDirty = true;
+  const ctx = _ensureActive("session_set");
+  ctx.data[key] = value;
+  ctx.isDirty = true;
 }
 
 

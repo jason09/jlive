@@ -5,7 +5,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { assertArity, assertBoolean, assertNumber, assertString, typeError } from "../internal/assert.js";
+import { assertArity, assertBoolean, assertDirectory, assertNumber, assertString, typeError } from "../internal/assert.js";
 
 
 /** PHP constants for scandir sorting */
@@ -157,8 +157,8 @@ export function dir(directory) {
  */
 export function opendir(directory) {
 
-  assertArity("directory", arguments, 1, 1);
-  assertString('directory', 1, directory);  
+  assertArity("opendir", arguments, 1, 1);
+  assertString("opendir", 1, directory);
 
   const p = directory.length ? directory : ".";
   try {
@@ -234,7 +234,7 @@ export function rewinddir(dir_handle) {
  */
 export function scandir(directory = ".", sorting_order = SCANDIR_SORT_ASCENDING) {
 
-  assertString("scandir", 2, directory);
+  assertString("scandir", 1, directory);
   assertNumber("scandir", 2, sorting_order);
 
   try {

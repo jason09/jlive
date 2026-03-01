@@ -1,6 +1,9 @@
 # jLive (JlivePHP)
 
-Modern **PHP-like helper library** for Node.js **v24+** (ES2025), shipped as **ESM** with **TypeScript typings**.
+![jLive Project Banner](./assets/jlive-hero.svg)
+
+**jLive** is a PHP-like helper library for Node.js **v24+** (ES2025), shipped as **ESM** with **TypeScript typings**.
+It helps PHP developers use familiar utility functions in modern JavaScript while staying practical for Node runtime patterns.
 
 This project brings a growing subset of PHP functions to JavaScript with:
 
@@ -72,6 +75,20 @@ const out = chain("  hello world  ")
 console.log(out); // HELLO JLIVE
 ```
 
+Use `pipe()` when you want a custom JS transform between built-in chain methods:
+
+```js
+import { chain } from "jlive";
+
+const out2 = chain("  hello world  ")
+  .trim()
+  .pipe((s) => s.replace("world", "jLive"))
+  .strtoupper()
+  .value();
+
+console.log(out2); // HELLO JLIVE
+```
+
 ---
 
 ## Notes on compatibility
@@ -98,6 +115,15 @@ This library exposes:
 
 Some Network functions are async because Node APIs are async (DNS / fetch):
 - `gethostbyname()`, `gethostbynamel()`, `get_headers()` return **Promise**.
+
+### Parity policy (intentional differences)
+
+This library aims for practical parity with PHP signatures, but some behavior is intentionally Node/JS-native:
+
+- **Password hashing compatibility:** `PASSWORD_DEFAULT` maps to bcrypt; legacy `$scrypt$...` hashes from older jLive versions are still supported by `password_verify()`.
+- **String indexing/length:** functions operate on JS UTF-16 code units (not byte strings).
+- **Associative arrays:** PHP arrays map to JS arrays/objects depending on shape; ordering and key coercion follow JS semantics where unavoidable.
+- **Async boundaries:** network/session operations that require I/O are `Promise`-based in Node.
 
 ---
 
@@ -182,6 +208,15 @@ When adding new functions:
 2. Add **runtime validation** (throw on mismatch).
 3. Add **English JSDoc** with a PHP manual `@see` link.
 4. Add tests in `test/run-tests.mjs`.
+
+### Quality checks
+
+Run the local quality gates before publishing:
+
+```bash
+npm run check
+npm run pack:check
+```
 
 ### Chaining: auto-generation and argument injection
 

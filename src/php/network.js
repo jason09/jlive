@@ -107,17 +107,45 @@ export function parse_url(url, component) {
   if (component !== undefined) assertNumber("parse_url", 2, component);
 
   try {
-    const u = new URL(url, "http://example.local");
+    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url);
     const parts = {
-      scheme: u.protocol ? u.protocol.replace(":", "") : null,
-      host: u.hostname || null,
-      port: u.port ? Number(u.port) : null,
-      user: u.username || null,
-      pass: u.password || null,
-      path: u.pathname || null,
-      query: u.search ? u.search.slice(1) : null,
-      fragment: u.hash ? u.hash.slice(1) : null,
+      scheme: null,
+      host: null,
+      port: null,
+      user: null,
+      pass: null,
+      path: null,
+      query: null,
+      fragment: null,
     };
+
+    if (hasScheme || url.startsWith("//")) {
+      const u = new URL(url, hasScheme ? undefined : "http://example.local");
+      parts.scheme = hasScheme ? (u.protocol ? u.protocol.replace(":", "") : null) : null;
+      parts.host = u.hostname || null;
+      parts.port = u.port ? Number(u.port) : null;
+      parts.user = u.username || null;
+      parts.pass = u.password || null;
+      parts.path = u.pathname || null;
+      parts.query = u.search ? u.search.slice(1) : null;
+      parts.fragment = u.hash ? u.hash.slice(1) : null;
+    } else {
+      // Relative/path-like URLs should not gain synthetic scheme/host.
+      const hashIdx = url.indexOf("#");
+      const queryIdx = url.indexOf("?");
+      const pathEnd =
+        hashIdx === -1 ? (queryIdx === -1 ? url.length : queryIdx) :
+        queryIdx === -1 ? hashIdx : Math.min(queryIdx, hashIdx);
+
+      const path = url.slice(0, pathEnd);
+      const query =
+        queryIdx !== -1 ? url.slice(queryIdx + 1, hashIdx !== -1 && hashIdx > queryIdx ? hashIdx : undefined) : "";
+      const fragment = hashIdx !== -1 ? url.slice(hashIdx + 1) : "";
+
+      parts.path = path || null;
+      parts.query = query ? query : null;
+      parts.fragment = fragment ? fragment : null;
+    }
 
     if (component === undefined) return parts;
 
@@ -368,4 +396,3 @@ export function inet_ntop(inAddr) {
   }
   return parts.join(":").replace(/:{3,}/, "::");
 }
-

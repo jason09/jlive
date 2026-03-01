@@ -1,0 +1,25 @@
+<svg width="960" height="320" viewBox="0 0 960 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">jLive Logo</title>
+  <desc id="desc">New logo for jLive, a PHP-like helper library for Node.js.</desc>
+  <defs>
+    <linearGradient id="stroke" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(58 54)">
+    <rect x="0" y="0" width="212" height="212" rx="44" fill="#0b1220" stroke="url(#stroke)" stroke-width="8"/>
+
+    <path d="M72 64 L42 106 L72 148" fill="none" stroke="#22d3ee" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M140 64 L170 106 L140 148" fill="none" stroke="#34d399" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <path d="M94 58 V128 C94 146 82 156 66 156" fill="none" stroke="#e2e8f0" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M116 58 V156 H154" fill="none" stroke="#e2e8f0" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <g transform="translate(316 122)">
+    <text x="0" y="0" fill="#0f172a" font-family="'Segoe UI', Tahoma, sans-serif" font-size="104" font-weight="800" letter-spacing="-1">jLive</text>
+    <text x="2" y="54" fill="#334155" font-family="'Segoe UI', Tahoma, sans-serif" font-size="33" font-weight="600">PHP-like helpers for Node.js</text>
+  </g>
+</svg>

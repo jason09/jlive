@@ -157,6 +157,17 @@ This library aims for practical parity with PHP signatures, but some behavior is
 
 ### Crypto / Password
 - `generate`, `hash`, `md5`, `password_get_info`, `password_hash`, `password_needs_rehash`, `password_verify`, `sha1`, `sha256`
+- `generate` is a jLive helper (not a built-in PHP function).
+
+```js
+import { PHP } from "jlive";
+
+// jLive extension (not native PHP): random token generator
+const token = PHP.Crypto.generate(32);
+const numericPin = PHP.Crypto.generate(6, "0123456789");
+
+console.log(token, numericPin);
+```
 
 **Constants:** `PASSWORD_ARGON2I`, `PASSWORD_ARGON2ID`, `PASSWORD_BCRYPT`, `PASSWORD_DEFAULT`
 

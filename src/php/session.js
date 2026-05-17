@@ -41,7 +41,6 @@ const _memStore = new Map(); // sid -> {data:string, mtime:number}
 const _sessionLocks = new Map(); // sid -> Promise queue tail
 
 const _sessionContext = new AsyncLocalStorage();
-let _sessionIdHint = "";
 
 /**
  * Default save handler (memory).
@@ -160,11 +159,8 @@ function _getContext() {
   return _sessionContext.getStore() ?? null;
 }
 
-function _ensureContext(req, res) {
-  const existing = _getContext();
-  if (existing && existing.req === req && existing.res === res) return existing;
-
-  const ctx = {
+function _createContext(req = null, res = null) {
+  return {
     status: PHP_SESSION_NONE,
     id: "",
     data: {},
@@ -174,6 +170,29 @@ function _ensureContext(req, res) {
     lockSid: "",
     lockRelease: null,
   };
+}
+
+function _ensureDetachedContext() {
+  const existing = _getContext();
+  if (existing) return existing;
+
+  const ctx = _createContext();
+  _sessionContext.enterWith(ctx);
+  return ctx;
+}
+
+function _ensureContext(req, res) {
+  const existing = _getContext();
+  if (existing) {
+    if (existing.req === req && existing.res === res) return existing;
+    if (existing.req === null && existing.res === null && existing.status === PHP_SESSION_NONE) {
+      existing.req = req;
+      existing.res = res;
+      return existing;
+    }
+  }
+
+  const ctx = _createContext(req, res);
   _sessionContext.enterWith(ctx);
   return ctx;
 }
@@ -283,11 +302,9 @@ export function session_id(id = undefined) {
   if (id !== undefined) {
     assertString("session_id", 1, id);
     if (ctx?.status === PHP_SESSION_ACTIVE) throw new Error("session_id(): cannot set id when session is active");
-    if (ctx) ctx.id = id;
-    else _sessionIdHint = id;
+    (ctx ?? _ensureDetachedContext()).id = id;
   }
-  if (ctx) return ctx.id || _sessionIdHint;
-  return _sessionIdHint;
+  return _getContext()?.id ?? "";
 }
 
 /**
@@ -337,10 +354,6 @@ if (__sessionSavePath && _handler === _defaultMemHandler) {
   try {
     const cookies = $_COOKIE(req);
     let sid = cookies[_sessionName] ?? ctx.id;
-    if (!sid && _sessionIdHint) {
-      sid = _sessionIdHint;
-      _sessionIdHint = "";
-    }
 
     if (sid && typeof sid !== "string") sid = String(sid);
 

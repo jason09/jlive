@@ -11,6 +11,22 @@ import dns from "node:dns/promises";
 import os from "node:os";
 import { assertArity, assertNumber, assertString, typeError } from "../internal/assert.js";
 
+function _extractExplicitPort(url) {
+  const authorityMatch = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:\/\/|\/\/)([^/?#]*)/.exec(url);
+  if (!authorityMatch) return null;
+
+  const authority = authorityMatch[1];
+  const hostPort = authority.includes("@") ? authority.slice(authority.lastIndexOf("@") + 1) : authority;
+
+  if (hostPort.startsWith("[")) {
+    const ipv6Match = /^\[[^\]]+\](?::(\d+))?$/.exec(hostPort);
+    return ipv6Match?.[1] ? Number(ipv6Match[1]) : null;
+  }
+
+  const portMatch = /:(\d+)$/.exec(hostPort);
+  return portMatch?.[1] ? Number(portMatch[1]) : null;
+}
+
 /**
  * gethostname — Gets the host name.
  * @see https://www.php.net/manual/en/function.gethostname.php
@@ -120,10 +136,11 @@ export function parse_url(url, component) {
     };
 
     if (hasScheme || url.startsWith("//")) {
+      const explicitPort = _extractExplicitPort(url);
       const u = new URL(url, hasScheme ? undefined : "http://example.local");
       parts.scheme = hasScheme ? (u.protocol ? u.protocol.replace(":", "") : null) : null;
       parts.host = u.hostname || null;
-      parts.port = u.port ? Number(u.port) : null;
+      parts.port = u.port ? Number(u.port) : explicitPort;
       parts.user = u.username || null;
       parts.pass = u.password || null;
       parts.path = u.pathname || null;
@@ -200,10 +217,7 @@ export function http_build_query(data, numericPrefix = "", argSeparator = "&", e
 
   const parts = [];
   const build = (prefix, value) => {
-    if (value === null || value === undefined) {
-      parts.push(`${enc(prefix)}=`);
-      return;
-    }
+    if (value === null || value === undefined) return;
     if (typeof value === "object") {
       if (Array.isArray(value)) {
         for (let i = 0; i < value.length; i++) build(`${prefix}[${i}]`, value[i]);

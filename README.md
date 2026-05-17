@@ -229,6 +229,8 @@ npm run check
 npm run pack:check
 ```
 
+If the `php` CLI is available on your machine, `npm test` also runs a small differential parity check against real PHP for selected high-risk helpers across string, array, date, and network modules, including `parse_url()` and `http_build_query()`.
+
 ### Chaining: auto-generation and argument injection
 
 Chaining is implemented in `src/chain.js` and controlled by `src/chain.config.js`.

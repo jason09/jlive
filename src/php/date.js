@@ -7,6 +7,68 @@ import { assertArity, assertNumber, assertString, typeError } from "../internal/
 
 let _defaultTimezone = "UTC";
 
+function _formatTzParts(tsMs, tz, options = {}) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+    ...options,
+  }).formatToParts(new Date(tsMs));
+}
+
+function _getTzPart(parts, type) {
+  return parts.find((part) => part.type === type)?.value ?? "";
+}
+
+function _getTzOffsetMinutes(tsMs, tz) {
+  const parts = _formatTzParts(tsMs, tz);
+  const asUtc = Date.UTC(
+    Number(_getTzPart(parts, "year")),
+    Number(_getTzPart(parts, "month")) - 1,
+    Number(_getTzPart(parts, "day")),
+    Number(_getTzPart(parts, "hour")),
+    Number(_getTzPart(parts, "minute")),
+    Number(_getTzPart(parts, "second")),
+  );
+  return Math.round((asUtc - tsMs) / 60_000);
+}
+
+function _getZonedDateParts(tsMs, tz) {
+  const parts = _formatTzParts(tsMs, tz, { weekday: "long" });
+  return {
+    year: Number(_getTzPart(parts, "year")),
+    month: Number(_getTzPart(parts, "month")),
+    day: Number(_getTzPart(parts, "day")),
+    hour: Number(_getTzPart(parts, "hour")),
+    minute: Number(_getTzPart(parts, "minute")),
+    second: Number(_getTzPart(parts, "second")),
+    weekday: _getTzPart(parts, "weekday"),
+  };
+}
+
+function _zonedDateTimeToTsMs(year, month, day, hour, minute, second, tz) {
+  const wallUtc = Date.UTC(year, month - 1, day, hour, minute, second, 0);
+  let tsMs = wallUtc;
+
+  for (let i = 0; i < 6; i++) {
+    const offset = _getTzOffsetMinutes(tsMs, tz);
+    const next = wallUtc - offset * 60_000;
+    if (next === tsMs) break;
+    tsMs = next;
+  }
+
+  const actual = _getZonedDateParts(tsMs, tz);
+  const actualWallUtc = Date.UTC(actual.year, actual.month - 1, actual.day, actual.hour, actual.minute, actual.second, 0);
+  if (actualWallUtc < wallUtc) tsMs += wallUtc - actualWallUtc;
+
+  return tsMs;
+}
+
 /**
  * date_default_timezone_set — Sets the default timezone used by all date/time functions.
  * @see https://www.php.net/manual/en/function.date-default-timezone-set.php
@@ -74,17 +136,17 @@ export function microtime(get_as_float = false) {
  */
 export function mktime(hour, minute, second, month, day, year) {
   assertArity("mktime", arguments, 0, 6);
-  const now = new Date();
-  const h = hour ?? now.getHours();
-  const m = minute ?? now.getMinutes();
-  const s = second ?? now.getSeconds();
-  const mo = (month ?? now.getMonth() + 1) - 1;
-  const d = day ?? now.getDate();
-  const y = year ?? now.getFullYear();
+  const now = _getZonedDateParts(Date.now(), _defaultTimezone);
+  const h = hour ?? now.hour;
+  const m = minute ?? now.minute;
+  const s = second ?? now.second;
+  const mo = month ?? now.month;
+  const d = day ?? now.day;
+  const y = year ?? now.year;
   [h, m, s, mo, d, y].forEach((v, i) => {
     if (typeof v !== "number") typeError("mktime", i + 1, "int", v);
   });
-  return Math.floor(new Date(y, mo, d, h, m, s).getTime() / 1000);
+  return Math.floor(_zonedDateTimeToTsMs(y, mo, d, h, m, s, _defaultTimezone) / 1000);
 }
 
 /**
@@ -95,20 +157,22 @@ export function mktime(hour, minute, second, month, day, year) {
 export function getdate(timestamp = time()) {
   assertArity("getdate", arguments, 0, 1);
   if (timestamp !== undefined && typeof timestamp !== "number") typeError("getdate", 1, "int", timestamp);
-  const d = new Date(timestamp * 1000);
+  const zoned = _getZonedDateParts(timestamp * 1000, _defaultTimezone);
   const wdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const wday = Math.max(0, wdays.indexOf(zoned.weekday));
+  const yday = Math.floor((Date.UTC(zoned.year, zoned.month - 1, zoned.day) - Date.UTC(zoned.year, 0, 1)) / 86400000);
   return {
-    seconds: d.getSeconds(),
-    minutes: d.getMinutes(),
-    hours: d.getHours(),
-    mday: d.getDate(),
-    wday: d.getDay(),
-    mon: d.getMonth() + 1,
-    year: d.getFullYear(),
-    yday: Math.floor((d - new Date(d.getFullYear(), 0, 1)) / 86400000),
-    weekday: wdays[d.getDay()],
-    month: months[d.getMonth()],
+    seconds: zoned.second,
+    minutes: zoned.minute,
+    hours: zoned.hour,
+    mday: zoned.day,
+    wday,
+    mon: zoned.month,
+    year: zoned.year,
+    yday,
+    weekday: zoned.weekday,
+    month: months[zoned.month - 1],
     0: timestamp,
   };
 }
@@ -572,6 +636,65 @@ export function timezone_identifiers_list() {
   return [];
 }
 
+function _newDateParseResult() {
+  return {
+    year: false,
+    month: false,
+    day: false,
+    hour: false,
+    minute: false,
+    second: false,
+    fraction: false,
+    warning_count: 0,
+    warnings: [],
+    error_count: 0,
+    errors: [],
+    is_localtime: false,
+  };
+}
+
+function _setParseError(result, position, message, weight = 1) {
+  if (Array.isArray(result.errors)) result.errors = {};
+  result.errors[position] = message;
+  result.error_count += weight;
+}
+
+function _setParseWarning(result, position, message) {
+  if (Array.isArray(result.warnings)) result.warnings = {};
+  result.warnings[position] = message;
+  result.warning_count += 1;
+}
+
+function _applyParsedTimezone(result, token) {
+  if (!token) return;
+
+  result.is_localtime = true;
+  result.is_dst = false;
+
+  if (token === "Z") {
+    result.zone_type = 2;
+    result.zone = 0;
+    result.tz_abbr = "Z";
+    return;
+  }
+
+  if (/^[+-]\d{2}:?\d{2}$/.test(token)) {
+    const sign = token[0] === "-" ? -1 : 1;
+    const compact = token.slice(1).replace(":", "");
+    const hours = Number(compact.slice(0, 2));
+    const minutes = Number(compact.slice(2, 4));
+    result.zone_type = 1;
+    result.zone = sign * (hours * 3600 + minutes * 60);
+    return;
+  }
+
+  if (/^[A-Za-z]{1,5}$/.test(token)) {
+    result.zone_type = 2;
+    result.zone = /^(UTC|GMT)$/i.test(token) ? 0 : null;
+    result.tz_abbr = token;
+  }
+}
+
 /**
  * date_parse — Returns array with information about a given date.
  * Best-effort using JS Date parsing.
@@ -583,27 +706,73 @@ export function date_parse(date) {
   assertArity("date_parse", arguments, 1, 1);
   assertString("date_parse", 1, date);
 
-  const d = new Date(date);
-  const errors = {};
-  const warnings = {};
-  const ok = !Number.isNaN(d.getTime());
+  const result = _newDateParseResult();
+  if (/^[A-Za-z]{1,32}$/.test(date)) {
+    result.error_count = 1;
+    result.errors = ["The timezone could not be found in the database"];
+    result.is_localtime = true;
+    result.zone_type = 0;
+    return result;
+  }
 
-  return {
-    year: ok ? d.getFullYear() : false,
-    month: ok ? d.getMonth() + 1 : false,
-    day: ok ? d.getDate() : false,
-    hour: ok ? d.getHours() : false,
-    minute: ok ? d.getMinutes() : false,
-    second: ok ? d.getSeconds() : false,
-    fraction: ok ? d.getMilliseconds() / 1000 : false,
-    warning_count: 0,
-    warnings,
-    error_count: ok ? 0 : 1,
-    errors: ok ? errors : { 0: "Failed to parse time string" },
-    is_localtime: true,
-    zone_type: 0,
-    zone: null,
-  };
+  if (/^[^A-Za-z0-9]+$/.test(date)) {
+    result.error_count = date.length;
+    result.errors = Array.from({ length: date.length }, () => "Unexpected character");
+    return result;
+  }
+
+  const slashDateWithTrailingTz = /^(?<year>\d{4})(?<sep>[-\/])(?<month>\d{2})\k<sep>(?<day>\d{2})(?<tz>[A-Za-z]{1,32})$/.exec(date);
+  if (slashDateWithTrailingTz?.groups) {
+    const { year, month, day, tz } = slashDateWithTrailingTz.groups;
+    result.year = Number(year);
+    result.month = Number(month);
+    result.day = Number(day);
+    result.error_count = 1;
+    result.errors = { [date.length - tz.length]: "The timezone could not be found in the database" };
+    result.is_localtime = true;
+    result.zone_type = 0;
+    return result;
+  }
+
+  const isoMatch = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})(?:[T\s](?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.(?<fraction>\d{1,6}))?)?)?(?:\s*(?<tz>Z|[+-]\d{2}:?\d{2}|[A-Za-z]{1,5}))?(?:\s+(?<extraTz>Z|[+-]\d{2}:?\d{2}|[A-Za-z]{1,5}))?$/.exec(date);
+  if (isoMatch?.groups) {
+    const { year, month, day, hour, minute, second, fraction, tz, extraTz } = isoMatch.groups;
+    result.year = Number(year);
+    result.month = Number(month);
+    result.day = Number(day);
+
+    if (hour !== undefined) {
+      result.hour = Number(hour);
+      result.minute = Number(minute);
+      result.second = second !== undefined ? Number(second) : 0;
+      result.fraction = fraction !== undefined ? Number(`0.${fraction}`) : 0;
+    }
+
+    _applyParsedTimezone(result, tz);
+    if (extraTz) _setParseWarning(result, date.length - extraTz.length, "Double timezone specification");
+    if (hour === undefined) {
+      if (result.month === 0 || (result.month >= 1 && result.month <= 12 && !checkdate(result.month, result.day, result.year))) {
+        _setParseWarning(result, date.length + 1, "The parsed date was invalid");
+      }
+    }
+    return result;
+  }
+
+  const parsed = new Date(date);
+  if (!Number.isNaN(parsed.getTime())) {
+    result.year = parsed.getFullYear();
+    result.month = parsed.getMonth() + 1;
+    result.day = parsed.getDate();
+    result.hour = parsed.getHours();
+    result.minute = parsed.getMinutes();
+    result.second = parsed.getSeconds();
+    result.fraction = parsed.getMilliseconds() / 1000;
+    return result;
+  }
+
+  result.error_count = 1;
+  result.errors = { 0: "Failed to parse time string" };
+  return result;
 }
 
 /**
@@ -619,53 +788,107 @@ export function date_parse_from_format(format, date) {
   assertString("date_parse_from_format", 1, format);
   assertString("date_parse_from_format", 2, date);
 
-  const map = {
-    Y: "(?<Y>\\d{4})",
-    y: "(?<y>\\d{2})",
-    m: "(?<m>\\d{2})",
-    n: "(?<n>\\d{1,2})",
-    d: "(?<d>\\d{2})",
-    j: "(?<j>\\d{1,2})",
-    H: "(?<H>\\d{2})",
-    G: "(?<G>\\d{1,2})",
-    i: "(?<i>\\d{2})",
-    s: "(?<s>\\d{2})",
+  const result = _newDateParseResult();
+  let inputIndex = 0;
+  let sawTime = false;
+
+  const tokens = {
+    Y: { re: /^\d{4}/, apply: (value) => { result.year = Number(value); } },
+    y: {
+      re: /^\d{2}/,
+      apply: (value) => {
+        const year = Number(value);
+        result.year = year <= 69 ? 2000 + year : 1900 + year;
+      },
+    },
+    m: { re: /^\d{2}/, apply: (value) => { result.month = Number(value); } },
+    n: { re: /^\d{1,2}/, apply: (value) => { result.month = Number(value); } },
+    d: { re: /^\d{2}/, apply: (value) => { result.day = Number(value); } },
+    j: { re: /^\d{1,2}/, apply: (value) => { result.day = Number(value); } },
+    H: { re: /^\d{2}/, apply: (value) => { result.hour = Number(value); sawTime = true; } },
+    G: { re: /^\d{1,2}/, apply: (value) => { result.hour = Number(value); sawTime = true; } },
+    i: { re: /^\d{2}/, apply: (value) => { result.minute = Number(value); sawTime = true; } },
+    s: { re: /^\d{2}/, apply: (value) => { result.second = Number(value); sawTime = true; } },
+    u: {
+      re: /^\d{1,6}/,
+      apply: (value) => {
+        result.fraction = Number(`0.${value.padEnd(6, "0")}`);
+        sawTime = true;
+      },
+    },
+    P: {
+      re: /^(?:Z|[+-]\d{2}:\d{2})/,
+      apply: (value) => { _applyParsedTimezone(result, value); },
+    },
+    O: {
+      re: /^(?:Z|[+-]\d{4})/,
+      apply: (value) => { _applyParsedTimezone(result, value); },
+    },
+    T: {
+      re: /^[A-Za-z]{1,5}/,
+      apply: (value) => { _applyParsedTimezone(result, value); },
+    },
   };
 
-  let rx = "^";
   for (let i = 0; i < format.length; i++) {
     const ch = format[i];
-    if (ch === "\\\\") {
+    if (ch === "\\") {
       i++;
-      rx += format[i] ? format[i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : "";
+      const literal = format[i] ?? "";
+      if (literal && date[inputIndex] === literal) inputIndex++;
+      else if (literal) {
+        _setParseError(result, inputIndex, "Unexpected data found.", 2);
+        if (inputIndex < date.length) inputIndex++;
+      }
       continue;
     }
-    if (map[ch]) rx += map[ch];
-    else rx += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const token = tokens[ch];
+    if (token) {
+      const slice = date.slice(inputIndex);
+      const match = token.re.exec(slice);
+      if (!match) {
+        _setParseError(result, inputIndex, "Unexpected data found.");
+        if (inputIndex < date.length) inputIndex++;
+        continue;
+      }
+      token.apply(match[0]);
+      inputIndex += match[0].length;
+      continue;
+    }
+
+    if (date[inputIndex] === ch) {
+      inputIndex++;
+    } else {
+      _setParseError(result, inputIndex, "Unexpected data found.", 2);
+      if (inputIndex < date.length) inputIndex++;
+    }
   }
-  rx += "$";
 
-  const re = new RegExp(rx);
-  const m = re.exec(date);
-  if (!m) {
-    return {
-      year: false, month: false, day: false, hour: false, minute: false, second: false, fraction: false,
-      warning_count: 0, warnings: {}, error_count: 1, errors: { 0: "Format mismatch" }, is_localtime: true,
-      zone_type: 0, zone: null,
-    };
+  if (inputIndex < date.length) {
+    _setParseError(result, inputIndex, "Trailing data");
   }
 
-  const g = m.groups ?? {};
-  const year = g.Y ? Number(g.Y) : (g.y ? 2000 + Number(g.y) : false);
-  const month = g.m ? Number(g.m) : (g.n ? Number(g.n) : false);
-  const day = g.d ? Number(g.d) : (g.j ? Number(g.j) : false);
-  const hour = g.H ? Number(g.H) : (g.G ? Number(g.G) : 0);
-  const minute = g.i ? Number(g.i) : 0;
-  const second = g.s ? Number(g.s) : 0;
+  if (sawTime) {
+    if (result.hour === false) result.hour = 0;
+    if (result.minute === false) result.minute = 0;
+    if (result.second === false) result.second = 0;
+    if (result.fraction === false) result.fraction = 0;
+  }
 
-  return {
-    year, month, day, hour, minute, second, fraction: 0,
-    warning_count: 0, warnings: {}, error_count: 0, errors: {}, is_localtime: true,
-    zone_type: 0, zone: null,
-  };
+  if (result.year !== false && result.month !== false && result.day !== false) {
+    if (!checkdate(result.month, result.day, result.year)) {
+      _setParseWarning(result, inputIndex, "The parsed date was invalid");
+    }
+  }
+
+  if (result.hour !== false || result.minute !== false || result.second !== false) {
+    const hour = result.hour === false ? 0 : Number(result.hour);
+    const minute = result.minute === false ? 0 : Number(result.minute);
+    const second = result.second === false ? 0 : Number(result.second);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+      _setParseWarning(result, inputIndex, "The parsed time was invalid");
+    }
+  }
+
+  return result;
 }

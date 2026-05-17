@@ -1,6 +1,6 @@
 {
   "name": "jlive",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "author": "jason90 <sidiki90@gmail.com>",
   "description": "PHP-like helper library for Node.js: familiar utility functions, chainable API, and TypeScript support.",
   "url": "https://jlive-lib.com",
